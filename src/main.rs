@@ -1,29 +1,27 @@
-use core::num;
-
 use bevy::{
     prelude::*,
-    sprite::{Material2d, MaterialMesh2dBundle, Mesh2dHandle, Wireframe2dPlugin},
+    sprite::{MaterialMesh2dBundle, Mesh2dHandle, Wireframe2dPlugin},
 };
+
+const WINDOW_WIDTH: f32 = 1600.0;
+const WINDOW_HEIGHT: f32 = 1048.0;
+const CELL_SIZE: f32 = 16.0;
+const BORDER_SIZE: f32 = 2.0;
+const NUM_ROWS: i32 = 64;
 
 #[derive(Resource)]
 struct GameTimer(Timer);
 
-enum State {
+#[derive(Component)]
+enum CellState {
     Alive,
     Dead,
 }
 
-#[derive(Component)]
-struct Cell {
-    x: i32,
-    y: i32,
-    state: State,
-}
-
 #[derive(Bundle)]
-struct CellMaterial<M: Material2d> {
-    cell: Cell,
-    mesh_material: MaterialMesh2dBundle<M>,
+struct CellBundle {
+    state: CellState,
+    material_mesh_bundle: MaterialMesh2dBundle<ColorMaterial>,
 }
 
 fn setup(
@@ -31,56 +29,48 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    // Add assets
+    let cell_mesh_handle = Mesh2dHandle(meshes.add(Rectangle::new(
+        CELL_SIZE - BORDER_SIZE,
+        CELL_SIZE - BORDER_SIZE,
+    )));
+
+    // Spawn camera
     commands.spawn(Camera2dBundle::default());
 
-    let cell_size = 16.0;
-    let border_size = 2.0;
-    let num_rows = 64;
-
     // Spawn grid
-    for i in -(num_rows / 2)..=(num_rows / 2) {
+    for i in -(NUM_ROWS / 2)..=(NUM_ROWS / 2) {
         commands.spawn(MaterialMesh2dBundle {
             mesh: Mesh2dHandle(
-                meshes.add(Rectangle::new(border_size, cell_size * num_rows as f32)),
+                meshes.add(Rectangle::new(BORDER_SIZE, CELL_SIZE * NUM_ROWS as f32)),
             ),
             material: materials.add(Color::srgb(0.5, 0.5, 0.5)),
-            transform: Transform::from_xyz(i as f32 * cell_size, 0.0, 0.0),
+            transform: Transform::from_xyz(i as f32 * CELL_SIZE, 0.0, 0.0),
             ..default()
         });
     }
-    for i in -(num_rows / 2)..=(num_rows / 2) {
+    for i in -(NUM_ROWS / 2)..=(NUM_ROWS / 2) {
         commands.spawn(MaterialMesh2dBundle {
             mesh: Mesh2dHandle(
-                meshes.add(Rectangle::new(cell_size * num_rows as f32, border_size)),
+                meshes.add(Rectangle::new(CELL_SIZE * NUM_ROWS as f32, BORDER_SIZE)),
             ),
             material: materials.add(Color::srgb(0.5, 0.5, 0.5)),
-            transform: Transform::from_xyz(0.0, i as f32 * cell_size, 0.0),
+            transform: Transform::from_xyz(0.0, i as f32 * CELL_SIZE, 0.0),
             ..default()
         });
     }
 
     // Spawn cells
-    for i in -(num_rows / 2)..(num_rows / 2) {
-        for j in -(num_rows / 2)..(num_rows / 2) {
-            commands.spawn(CellMaterial {
-                cell: Cell {
-                    x: 1,
-                    y: 1,
-                    state: State::Alive,
-                },
-                mesh_material: MaterialMesh2dBundle {
-                    mesh: Mesh2dHandle(meshes.add(Rectangle::new(
-                        cell_size - border_size,
-                        cell_size - border_size,
-                    ))),
-                    material: materials.add(Color::srgb(
-                        i32::abs(i) as f32 / num_rows as f32,
-                        i32::abs(i) as f32 / num_rows as f32,
-                        i32::abs(i) as f32 / num_rows as f32,
-                    )),
+    for i in -(NUM_ROWS / 2)..(NUM_ROWS / 2) {
+        for j in -(NUM_ROWS / 2)..(NUM_ROWS / 2) {
+            commands.spawn(CellBundle {
+                state: CellState::Dead,
+                material_mesh_bundle: MaterialMesh2dBundle {
+                    mesh: cell_mesh_handle.clone(),
+                    material: materials.add(Color::BLACK),
                     transform: Transform::from_xyz(
-                        i as f32 * cell_size + (cell_size / 2.0),
-                        j as f32 * cell_size + (cell_size / 2.0),
+                        i as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
+                        j as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
                         0.0,
                     ),
                     ..default()
@@ -90,9 +80,29 @@ fn setup(
     }
 }
 
-fn update(time: Res<Time>, mut timer: ResMut<GameTimer>) {
+fn update(
+    time: Res<Time>,
+    mut timer: ResMut<GameTimer>,
+    mut query: Query<(&mut CellState, &Handle<ColorMaterial>)>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     if timer.0.tick(time.delta()).just_finished() {
-        println!("test");
+        for (mut state, handle) in &mut query {
+            match *state {
+                CellState::Alive => {
+                    *state = CellState::Dead;
+                    if let Some(material) = materials.get_mut(handle) {
+                        material.color = Color::BLACK;
+                    }
+                }
+                CellState::Dead => {
+                    *state = CellState::Alive;
+                    if let Some(material) = materials.get_mut(handle) {
+                        material.color = Color::WHITE;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -104,12 +114,12 @@ fn exit_system(mut exit: EventWriter<AppExit>, keyboard: Res<ButtonInput<KeyCode
 
 fn main() {
     App::new()
-        .insert_resource(GameTimer(Timer::from_seconds(2.0, TimerMode::Repeating)))
+        .insert_resource(GameTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Meno".into(),
-                    resolution: (1600., 1048.).into(),
+                    resolution: (WINDOW_WIDTH, WINDOW_HEIGHT).into(),
                     ..default()
                 }),
                 ..default()
