@@ -1,12 +1,10 @@
 use rand::prelude::*;
-use std::collections::HashSet;
 
 use bevy::{
     prelude::*,
     sprite::{MaterialMesh2dBundle, Mesh2dHandle},
 };
 
-const NUM_CELLS: i32 = 500;
 const WINDOW_WIDTH: f32 = 1600.0;
 const WINDOW_HEIGHT: f32 = 1048.0;
 const CELL_SIZE: f32 = 16.0;
@@ -21,13 +19,13 @@ struct GameTimer(Timer);
 
 #[derive(Resource)]
 struct GameState {
-    board: [[CellState; BOARD_SIZE as usize]; BOARD_SIZE as usize]
+    board: [[CellState; BOARD_SIZE as usize]; BOARD_SIZE as usize],
 }
 
 impl Default for GameState {
     fn default() -> Self {
         GameState {
-            board: [[CellState::Dead; BOARD_SIZE as usize]; BOARD_SIZE as usize]
+            board: [[CellState::Dead; BOARD_SIZE as usize]; BOARD_SIZE as usize],
         }
     }
 }
@@ -38,7 +36,7 @@ struct CellPosition {
     y: i32,
 }
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
 enum CellState {
     Alive,
     Dead,
@@ -47,7 +45,6 @@ enum CellState {
 #[derive(Bundle)]
 struct CellBundle {
     cell_position: CellPosition,
-    state: CellState,
     material_mesh_bundle: MaterialMesh2dBundle<ColorMaterial>,
 }
 
@@ -86,79 +83,105 @@ fn spawn_cells(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    mut game_state: ResMut<GameState>
+    mut game_state: ResMut<GameState>,
 ) {
     let cell_mesh_handle = Mesh2dHandle(meshes.add(Rectangle::new(
         CELL_SIZE - BORDER_SIZE,
         CELL_SIZE - BORDER_SIZE,
     )));
-
-    let mut occupied_cells: HashSet<(i32, i32)> = HashSet::new();
     let mut rng = rand::thread_rng();
 
-    for _ in 0..NUM_CELLS {
-        
-        // Get new board index
-        let mut i = rng.gen_range(-(BOARD_SIZE / 2)..(BOARD_SIZE / 2));
-        let mut j = rng.gen_range(-(BOARD_SIZE / 2)..(BOARD_SIZE / 2));    
-        loop {
-            if !occupied_cells.contains(&(i, j)) {
-                occupied_cells.insert((i, j));
-                break;
+    for i in -(BOARD_SIZE / 2)..(BOARD_SIZE / 2) {
+        for j in -(BOARD_SIZE / 2)..(BOARD_SIZE / 2) {
+            let i_absolute = i + (BOARD_SIZE / 2);
+            let j_absolute = j + (BOARD_SIZE / 2);
+
+            let n: f64 = rng.gen();
+            if n > 0.5 {
+                commands.spawn(CellBundle {
+                    cell_position: CellPosition {
+                        x: i_absolute,
+                        y: j_absolute,
+                    },
+                    material_mesh_bundle: MaterialMesh2dBundle {
+                        mesh: cell_mesh_handle.clone(),
+                        material: materials.add(ALIVE_CELL_COLOR),
+                        transform: Transform::from_xyz(
+                            i as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
+                            j as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
+                            0.0,
+                        ),
+                        ..default()
+                    },
+                });
+                game_state.board[i_absolute as usize][j_absolute as usize] = CellState::Alive;
             } else {
-                i = rng.gen_range(-(BOARD_SIZE / 2)..(BOARD_SIZE / 2));
-                j = rng.gen_range(-(BOARD_SIZE / 2)..(BOARD_SIZE / 2));    
+                commands.spawn(CellBundle {
+                    cell_position: CellPosition {
+                        x: i_absolute,
+                        y: j_absolute,
+                    },
+                    material_mesh_bundle: MaterialMesh2dBundle {
+                        mesh: cell_mesh_handle.clone(),
+                        material: materials.add(DEAD_CELL_COLOR),
+                        transform: Transform::from_xyz(
+                            i as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
+                            j as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
+                            0.0,
+                        ),
+                        ..default()
+                    },
+                });
             }
         }
-        let i_absolute = i + (BOARD_SIZE / 2);
-        let j_absolute = j + (BOARD_SIZE / 2);
-
-        // Spawn cell
-        commands.spawn(CellBundle {
-            cell_position: CellPosition { x: i_absolute, y: j_absolute },
-            state: CellState::Dead,
-            material_mesh_bundle: MaterialMesh2dBundle {
-                mesh: cell_mesh_handle.clone(),
-                material: materials.add(ALIVE_CELL_COLOR),
-                transform: Transform::from_xyz(
-                    i as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
-                    j as f32 * CELL_SIZE + (CELL_SIZE / 2.0),
-                    0.0,
-                ),
-                ..default()
-            },
-        });
-
-        // Update board
-        game_state.board[i_absolute as usize][j_absolute as usize] = CellState::Alive;
     }
 }
 
 fn update(
     time: Res<Time>,
     mut timer: ResMut<GameTimer>,
-    mut query: Query<(&mut CellState, &Handle<ColorMaterial>)>,
+    mut query: Query<(&mut CellPosition, &Handle<ColorMaterial>)>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    game_state: ResMut<GameState>
+    mut game_state: ResMut<GameState>,
 ) {
     if timer.0.tick(time.delta()).just_finished() {
-        for (mut state, handle) in &mut query {
-            match *state {
-                CellState::Alive => {
-                    *state = CellState::Dead;
-                    if let Some(material) = materials.get_mut(handle) {
-                        material.color = DEAD_CELL_COLOR;
-                    }
+        for (position, handle) in &mut query {
+            let num_neighbors = get_num_neighbors(&game_state, &position);
+            let cell_state = game_state.board[position.x as usize][position.y as usize];
+
+            if (cell_state == CellState::Alive) && (num_neighbors < 2 || num_neighbors > 3) {
+                game_state.board[position.x as usize][position.y as usize] = CellState::Dead;
+                if let Some(material) = materials.get_mut(handle) {
+                    material.color = DEAD_CELL_COLOR;
                 }
-                CellState::Dead => {
-                    *state = CellState::Alive;
-                    if let Some(material) = materials.get_mut(handle) {
-                        material.color = ALIVE_CELL_COLOR;
-                    }
+            }
+
+            if (cell_state == CellState::Dead) && (num_neighbors == 3) {
+                game_state.board[position.x as usize][position.y as usize] = CellState::Alive;
+                if let Some(material) = materials.get_mut(handle) {
+                    material.color = ALIVE_CELL_COLOR;
                 }
             }
         }
     }
+}
+
+fn get_num_neighbors(game_state: &ResMut<GameState>, position: &CellPosition) -> i32 {
+    let mut num_neighbors = 0;
+
+    let dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for dir in dirs {
+        let new_x = position.x + dir[0];
+        let new_y = position.y + dir[1];
+
+        if new_x >= 0 && new_x < BOARD_SIZE && new_y >= 0 && new_y < BOARD_SIZE {
+            if game_state.board[new_x as usize][new_y as usize] == CellState::Alive {
+                num_neighbors += 1;
+            }
+        }
+    }
+
+    return num_neighbors;
 }
 
 fn exit_system(mut exit: EventWriter<AppExit>, keyboard: Res<ButtonInput<KeyCode>>) {
