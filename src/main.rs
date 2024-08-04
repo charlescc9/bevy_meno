@@ -3,16 +3,19 @@ use rand::prelude::*;
 use bevy::{
     prelude::*,
     sprite::{MaterialMesh2dBundle, Mesh2dHandle},
+    utils::hashbrown::HashSet,
 };
 
-const WINDOW_WIDTH: f32 = 1600.0;
-const WINDOW_HEIGHT: f32 = 1048.0;
+const WINDOW_WIDTH: f32 = 800.0;
+const WINDOW_HEIGHT: f32 = 600.0;
 const CELL_SIZE: f32 = 16.0;
 const BORDER_SIZE: f32 = 2.0;
-const BOARD_SIZE: i32 = 64;
+const BOARD_SIZE: i32 = 32;
 const BOARD_COLOR: Color = Color::srgb(0.5, 0.5, 0.5);
 const ALIVE_CELL_COLOR: Color = Color::WHITE;
 const DEAD_CELL_COLOR: Color = Color::BLACK;
+const GLIDER: bool = false;
+const RATE: f32 = 0.5;
 
 #[derive(Resource)]
 struct GameTimer(Timer);
@@ -90,6 +93,12 @@ fn spawn_cells(
         CELL_SIZE - BORDER_SIZE,
     )));
     let mut rng = rand::thread_rng();
+    let mut glider_cells = HashSet::new();
+    glider_cells.insert((0, BOARD_SIZE - 2));
+    glider_cells.insert((1, BOARD_SIZE - 3));
+    glider_cells.insert((2, BOARD_SIZE - 1));
+    glider_cells.insert((2, BOARD_SIZE - 2));
+    glider_cells.insert((2, BOARD_SIZE - 3));
 
     for i in -(BOARD_SIZE / 2)..(BOARD_SIZE / 2) {
         for j in -(BOARD_SIZE / 2)..(BOARD_SIZE / 2) {
@@ -97,7 +106,8 @@ fn spawn_cells(
             let j_absolute = j + (BOARD_SIZE / 2);
 
             let n: f64 = rng.gen();
-            if n > 0.5 {
+            if (GLIDER && glider_cells.contains(&(i_absolute, j_absolute))) || (!GLIDER && n > 0.5)
+            {
                 commands.spawn(CellBundle {
                     cell_position: CellPosition {
                         x: i_absolute,
@@ -114,6 +124,7 @@ fn spawn_cells(
                         ..default()
                     },
                 });
+
                 game_state.board[i_absolute as usize][j_absolute as usize] = CellState::Alive;
             } else {
                 commands.spawn(CellBundle {
@@ -145,31 +156,47 @@ fn update(
     mut game_state: ResMut<GameState>,
 ) {
     if timer.0.tick(time.delta()).just_finished() {
+        // Clone board so all updates occur simultaneously
+        let mut new_board = game_state.board.clone();
+
+        // Iterate through all cells
         for (position, handle) in &mut query {
             let num_neighbors = get_num_neighbors(&game_state, &position);
             let cell_state = game_state.board[position.x as usize][position.y as usize];
 
             if (cell_state == CellState::Alive) && (num_neighbors < 2 || num_neighbors > 3) {
-                game_state.board[position.x as usize][position.y as usize] = CellState::Dead;
+                new_board[position.x as usize][position.y as usize] = CellState::Dead;
                 if let Some(material) = materials.get_mut(handle) {
                     material.color = DEAD_CELL_COLOR;
                 }
             }
 
             if (cell_state == CellState::Dead) && (num_neighbors == 3) {
-                game_state.board[position.x as usize][position.y as usize] = CellState::Alive;
+                new_board[position.x as usize][position.y as usize] = CellState::Alive;
                 if let Some(material) = materials.get_mut(handle) {
                     material.color = ALIVE_CELL_COLOR;
                 }
             }
         }
+
+        // Update board
+        game_state.board = new_board;
     }
 }
 
 fn get_num_neighbors(game_state: &ResMut<GameState>, position: &CellPosition) -> i32 {
     let mut num_neighbors = 0;
 
-    let dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    let dirs = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+    ];
     for dir in dirs {
         let new_x = position.x + dir[0];
         let new_y = position.y + dir[1];
@@ -193,7 +220,7 @@ fn exit_system(mut exit: EventWriter<AppExit>, keyboard: Res<ButtonInput<KeyCode
 fn main() {
     App::new()
         .insert_resource(ClearColor(DEAD_CELL_COLOR))
-        .insert_resource(GameTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
+        .insert_resource(GameTimer(Timer::from_seconds(RATE, TimerMode::Repeating)))
         .insert_resource(GameState::default())
         .add_plugins((DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
